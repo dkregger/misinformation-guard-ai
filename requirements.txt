@@ -1,6 +1,5 @@
 Flask
 snscrape
 transformers
-torch
 requests
 newspaper3k
