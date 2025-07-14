@@ -3,7 +3,7 @@ from classifier import detect_misinformation
 import requests
 
 # Replace with your Heroku app URL
-APP_URL = "https://news-scrapper-misinformation.com/add"
+APP_URL = "https://misinformation-guard-ai-bc66a4834fd0.herokuapp.com/"
 KEYWORD = "Sherrod Brown"  # Change to your candidate or topic
 
 def main():
