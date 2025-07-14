@@ -3,8 +3,8 @@ from classifier import detect_misinformation
 import requests
 
 # Replace with your Heroku app URL
-APP_URL = "https://your-app-name.herokuapp.com/add"
-KEYWORD = "John Smith"  # Change to your candidate or topic
+APP_URL = "https://news-scrapper-misinformation.com/add"
+KEYWORD = "Sherrod Brown"  # Change to your candidate or topic
 
 def main():
     tweets = scrape_tweets(KEYWORD)
