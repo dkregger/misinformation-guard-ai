@@ -3,3 +3,5 @@ snscrape
 transformers
 requests
 newspaper3k
+Flask-SQLAlchemy
+psycopg2-binary
