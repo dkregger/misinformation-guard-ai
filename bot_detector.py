@@ -87,8 +87,7 @@ def analyze_username(username):
         reasons.append("Username contains long numeric sequence")
     
     # Pattern 2: Name followed by many numbers (common bot pattern)
-    if re.search(r'^[a-zA-Z]+\d{4,}
-    , username):
+    if re.search(r'^[a-zA-Z]+\d{4,}$', username):
         score += 0.25
         reasons.append("Username follows name+numbers pattern")
     
