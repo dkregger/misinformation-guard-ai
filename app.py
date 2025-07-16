@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-from models import db, FlaggedPost
+from models import db, FlaggedPost, MonitoringSession
 import os
 
 app = Flask(__name__)
@@ -59,7 +59,12 @@ def add_flagged():
             confidence=data.get('confidence', 0.0),
             label=data.get('label', 'unknown'),
             url=data.get('url'),
-            source=data.get('source', 'unknown')
+            source=data.get('source', 'unknown'),
+            username=data.get('username'),
+            is_bot=data.get('is_bot', False),
+            bot_confidence=data.get('bot_confidence', 0.0),
+            bot_reasons=data.get('bot_reasons'),
+            session_id=data.get('session_id')  # Link to monitoring session
         )
         
         # Add to database
@@ -73,6 +78,121 @@ def add_flagged():
         db.session.rollback()  # Undo any partial changes
         return jsonify({"error": "Failed to add post"}), 500
 
+@app.route("/monitoring/sessions", methods=["GET"])
+def get_monitoring_sessions():
+    """
+    Get monitoring session history with performance metrics
+    """
+    try:
+        limit = request.args.get('limit', 10, type=int)
+        sessions = MonitoringSession.query.order_by(MonitoringSession.start_time.desc()).limit(limit).all()
+        
+        sessions_data = [session.to_dict() for session in sessions]
+        return jsonify(sessions_data)
+    
+    except Exception as e:
+        print(f"Error getting monitoring sessions: {e}")
+        return jsonify({"error": "Failed to retrieve monitoring sessions"}), 500
+
+@app.route("/monitoring/sessions", methods=["POST"])
+def create_monitoring_session():
+    """
+    Create a new monitoring session
+    """
+    try:
+        data = request.json
+        
+        new_session = MonitoringSession(
+            session_type=data.get('session_type', 'unknown'),
+            use_real_data=data.get('use_real_data', False)
+        )
+        
+        db.session.add(new_session)
+        db.session.commit()
+        
+        return jsonify({"session_id": new_session.id, "status": "created"}), 201
+    
+    except Exception as e:
+        print(f"Error creating monitoring session: {e}")
+        db.session.rollback()
+        return jsonify({"error": "Failed to create monitoring session"}), 500
+
+@app.route("/monitoring/sessions/<int:session_id>", methods=["PUT"])
+def update_monitoring_session(session_id):
+    """
+    Update monitoring session with final metrics
+    """
+    try:
+        data = request.json
+        session = MonitoringSession.query.get_or_404(session_id)
+        
+        # Update all provided fields with proper datetime conversion
+        for field, value in data.items():
+            if field == 'end_time' and isinstance(value, str):
+                # Convert ISO string to datetime object
+                try:
+                    from datetime import datetime
+                    value = datetime.fromisoformat(value.replace('Z', '+00:00'))
+                except ValueError:
+                    # If parsing fails, use current time
+                    value = datetime.utcnow()
+            
+            if hasattr(session, field):
+                setattr(session, field, value)
+        
+        db.session.commit()
+        
+        return jsonify({"status": "updated"}), 200
+    
+    except Exception as e:
+        print(f"Error updating monitoring session: {e}")
+        db.session.rollback()
+        return jsonify({"error": f"Failed to update monitoring session: {str(e)}"}), 500
+
+@app.route("/monitoring/stats/summary", methods=["GET"])
+def get_monitoring_summary():
+    """
+    Get comprehensive monitoring statistics
+    """
+    try:
+        # Recent session stats (last 10 sessions)
+        recent_sessions = MonitoringSession.query.order_by(MonitoringSession.start_time.desc()).limit(10).all()
+        
+        # Overall stats
+        total_sessions = MonitoringSession.query.count()
+        total_articles_processed = db.session.query(db.func.sum(MonitoringSession.total_articles_analyzed)).scalar() or 0
+        total_articles_flagged = db.session.query(db.func.sum(MonitoringSession.total_flagged)).scalar() or 0
+        
+        # Average metrics
+        avg_flagging_rate = db.session.query(db.func.avg(MonitoringSession.flagging_rate)).scalar() or 0
+        avg_scraping_success = db.session.query(db.func.avg(MonitoringSession.scraping_success_rate)).scalar() or 0
+        
+        # Content breakdown
+        total_propaganda = db.session.query(db.func.sum(MonitoringSession.propaganda_count)).scalar() or 0
+        total_toxic = db.session.query(db.func.sum(MonitoringSession.toxic_count)).scalar() or 0
+        total_bots = db.session.query(db.func.sum(MonitoringSession.bot_count)).scalar() or 0
+        
+        summary = {
+            "total_sessions": total_sessions,
+            "total_articles_processed": total_articles_processed,
+            "total_articles_flagged": total_articles_flagged,
+            "overall_flagging_rate": (total_articles_flagged / total_articles_processed * 100) if total_articles_processed > 0 else 0,
+            "average_flagging_rate": float(avg_flagging_rate) if avg_flagging_rate else 0,
+            "average_scraping_success_rate": float(avg_scraping_success) if avg_scraping_success else 0,
+            "content_breakdown": {
+                "propaganda": total_propaganda,
+                "toxic": total_toxic,
+                "bots": total_bots,
+                "total_problematic": total_propaganda + total_toxic + total_bots
+            },
+            "recent_sessions": [session.to_dict() for session in recent_sessions[:5]]
+        }
+        
+        return jsonify(summary)
+    
+    except Exception as e:
+        print(f"Error getting monitoring summary: {e}")
+        return jsonify({"error": "Failed to get monitoring summary"}), 500
 @app.route("/stats", methods=["GET"])
 def get_stats():
     """
@@ -83,13 +203,19 @@ def get_stats():
         propaganda_posts = FlaggedPost.query.filter_by(label='propaganda').count()
         toxic_posts = FlaggedPost.query.filter_by(label='toxic').count()
         reliable_posts = FlaggedPost.query.filter_by(label='reliable').count()
+        bot_posts = FlaggedPost.query.filter_by(is_bot=True).count()
         
         return jsonify({
             "total_flagged": total_posts,
             "propaganda_count": propaganda_posts,
             "toxic_count": toxic_posts,
             "reliable_count": reliable_posts,
-            "flagged_content": propaganda_posts + toxic_posts
+            "bot_count": bot_posts,
+            "flagged_content": propaganda_posts + toxic_posts,
+            "human_vs_bot": {
+                "bot_posts": bot_posts,
+                "human_posts": total_posts - bot_posts
+            }
         })
     
     except Exception as e:
