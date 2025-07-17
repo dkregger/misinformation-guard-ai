@@ -140,6 +140,12 @@
             background: #fff;
             border-radius: 8px;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+            transition: opacity 0.3s ease;
+        }
+
+        .flagged-item.reviewing {
+            opacity: 0.5;
+            pointer-events: none;
         }
 
         .flagged-item.propaganda {
@@ -154,10 +160,42 @@
             border-left-color: #27ae60;
         }
 
+        .flagged-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 8px;
+        }
+
         .flagged-title {
             font-weight: 600;
-            margin-bottom: 8px;
             color: #333;
+            flex: 1;
+            margin-right: 12px;
+        }
+
+        .review-button {
+            background: #27ae60;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 6px 12px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            font-weight: 600;
+            transition: all 0.2s ease;
+            flex-shrink: 0;
+        }
+
+        .review-button:hover {
+            background: #219a52;
+            transform: scale(1.05);
+        }
+
+        .review-button:disabled {
+            background: #95a5a6;
+            cursor: not-allowed;
+            transform: none;
         }
 
         .flagged-meta {
@@ -269,6 +307,16 @@
             color: #721c24;
         }
 
+        .review-success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            text-align: center;
+        }
+
         @media (max-width: 768px) {
             .content-grid {
                 grid-template-columns: 1fr;
@@ -292,6 +340,15 @@
             .session-stats {
                 text-align: left;
             }
+
+            .flagged-header {
+                flex-direction: column;
+                gap: 8px;
+            }
+
+            .flagged-title {
+                margin-right: 0;
+            }
         }
     </style>
 </head>
@@ -301,8 +358,8 @@
     <script type="text/babel">
         const { useState, useEffect } = React;
 
-        // API Configuration
-        const API_BASE = 'http://localhost:5000';
+        // API Configuration - adjust this for your deployment
+        const API_BASE = window.location.origin;
 
         // Main Dashboard Component
         function Dashboard() {
@@ -317,6 +374,7 @@
             const [error, setError] = useState(null);
             const [lastUpdate, setLastUpdate] = useState(new Date());
             const [apiStatus, setApiStatus] = useState('checking');
+            const [reviewMessage, setReviewMessage] = useState('');
 
             // Fetch data from API
             const fetchData = async () => {
@@ -356,7 +414,12 @@
                             propaganda_count: 0, 
                             toxic_count: 0, 
                             bot_count: 0,
-                            reliable_count: 0 
+                            reliable_count: 0,
+                            review_stats: {
+                                reviewed_count: 0,
+                                unreviewed_count: 0,
+                                review_percentage: 0
+                            }
                         }),
                         fetchWithFallback(`${API_BASE}/flagged`, []),
                         fetchWithFallback(`${API_BASE}/monitoring/sessions?limit=10`, []),
@@ -385,6 +448,42 @@
                     console.error('API Error:', err);
                 } finally {
                     setLoading(false);
+                }
+            };
+
+            // Mark content as reviewed
+            const markAsReviewed = async (postId) => {
+                try {
+                    const response = await fetch(`${API_BASE}/flagged/${postId}/review`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        }
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`Failed to mark as reviewed: ${response.status}`);
+                    }
+
+                    const result = await response.json();
+                    
+                    // Show success message
+                    setReviewMessage(`Content marked as reviewed at ${new Date(result.reviewed_at).toLocaleString()}`);
+                    setTimeout(() => setReviewMessage(''), 3000);
+
+                    // Remove the item from the current flagged list
+                    setData(prevData => ({
+                        ...prevData,
+                        flagged: prevData.flagged.filter(item => item.id !== postId)
+                    }));
+
+                    // Refresh stats to update review counts
+                    setTimeout(fetchData, 500);
+
+                } catch (err) {
+                    console.error('Error marking as reviewed:', err);
+                    setReviewMessage('Error marking content as reviewed. Please try again.');
+                    setTimeout(() => setReviewMessage(''), 3000);
                 }
             };
 
@@ -422,7 +521,7 @@
                         <div className="error">
                             <h3>Unable to connect to API</h3>
                             <p>{error}</p>
-                            <p>Make sure the Flask app is running on localhost:5000</p>
+                            <p>Make sure the Flask app is running</p>
                             <button onClick={fetchData} className="refresh-btn">
                                 Retry Connection
                             </button>
@@ -462,7 +561,7 @@
 
                     <main>
                         {activeTab === 'overview' && <OverviewTab data={data} />}
-                        {activeTab === 'flagged' && <FlaggedTab data={data} />}
+                        {activeTab === 'flagged' && <FlaggedTab data={data} markAsReviewed={markAsReviewed} reviewMessage={reviewMessage} />}
                         {activeTab === 'sessions' && <SessionsTab data={data} />}
                     </main>
                 </div>
@@ -510,16 +609,16 @@
                         </div>
 
                         <div className="card">
-                            <h3>🏷️ Content Breakdown</h3>
-                            {summary ? (
+                            <h3>✅ Review Progress</h3>
+                            {stats?.review_stats ? (
                                 <div>
-                                    <p><strong>Propaganda:</strong> {summary.content_breakdown?.propaganda || 0}</p>
-                                    <p><strong>Toxic:</strong> {summary.content_breakdown?.toxic || 0}</p>
-                                    <p><strong>Bots:</strong> {summary.content_breakdown?.bots || 0}</p>
-                                    <p><strong>Total Problematic:</strong> {summary.content_breakdown?.total_problematic || 0}</p>
+                                    <p><strong>Reviewed:</strong> {stats.review_stats.reviewed_count}</p>
+                                    <p><strong>Pending Review:</strong> {stats.review_stats.unreviewed_count}</p>
+                                    <p><strong>Review Progress:</strong> {stats.review_stats.review_percentage.toFixed(1)}%</p>
+                                    <p><strong>Total Flagged:</strong> {stats.total_flagged}</p>
                                 </div>
                             ) : (
-                                <p>Loading content breakdown...</p>
+                                <p>Loading review statistics...</p>
                             )}
                         </div>
                     </div>
@@ -527,17 +626,41 @@
             );
         }
 
-        // Flagged Content Tab
-        function FlaggedTab({ data }) {
+        // Flagged Content Tab with Review Feature
+        function FlaggedTab({ data, markAsReviewed, reviewMessage }) {
             const { flagged } = data;
+            const [reviewingItems, setReviewingItems] = useState(new Set());
+
+            const handleReview = async (postId) => {
+                // Add visual feedback
+                setReviewingItems(prev => new Set([...prev, postId]));
+                
+                try {
+                    await markAsReviewed(postId);
+                } finally {
+                    // Remove visual feedback
+                    setReviewingItems(prev => {
+                        const newSet = new Set(prev);
+                        newSet.delete(postId);
+                        return newSet;
+                    });
+                }
+            };
 
             return (
                 <div className="content-grid full-width">
                     <div className="card">
-                        <h3>🚩 Recently Flagged Content ({flagged.length} items)</h3>
+                        <h3>🚩 Recently Flagged Content ({flagged.length} items awaiting review)</h3>
+                        
+                        {reviewMessage && (
+                            <div className="review-success">
+                                {reviewMessage}
+                            </div>
+                        )}
+                        
                         {flagged.length === 0 ? (
                             <div>
-                                <p>No flagged content found. Run monitoring to detect misinformation.</p>
+                                <p>No unreviewed flagged content found. All content has been reviewed!</p>
                                 <p><strong>To generate test data:</strong></p>
                                 <p>1. Run: <code>python scrape_and_flag.py</code></p>
                                 <p>2. Or run: <code>python comprehensive_monitor.py --mock</code></p>
@@ -545,9 +668,21 @@
                         ) : (
                             <div>
                                 {flagged.slice(0, 20).map(item => (
-                                    <div key={item.id} className={`flagged-item ${item.label}`}>
-                                        <div className="flagged-title">
-                                            {item.content.split('\n')[0] || 'Untitled Content'}
+                                    <div 
+                                        key={item.id} 
+                                        className={`flagged-item ${item.label} ${reviewingItems.has(item.id) ? 'reviewing' : ''}`}
+                                    >
+                                        <div className="flagged-header">
+                                            <div className="flagged-title">
+                                                {item.content.split('\n')[0] || 'Untitled Content'}
+                                            </div>
+                                            <button 
+                                                className="review-button"
+                                                onClick={() => handleReview(item.id)}
+                                                disabled={reviewingItems.has(item.id)}
+                                            >
+                                                {reviewingItems.has(item.id) ? 'Reviewing...' : '✓ Reviewed'}
+                                            </button>
                                         </div>
                                         <div className="flagged-meta">
                                             <span>🏷️ {item.label} ({(item.confidence * 100).toFixed(1)}%)</span>

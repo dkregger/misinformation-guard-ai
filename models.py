@@ -42,9 +42,15 @@ class FlaggedPost(db.Model):
     session_id = db.Column(db.Integer, db.ForeignKey('monitoring_session.id'), 
                           comment="Links to the monitoring session that found this")
     
-    # Timestamp
+    # Timestamp when flagged
     timestamp = db.Column(db.DateTime, default=datetime.utcnow, 
                          comment="When this content was flagged")
+    
+    # NEW REVIEW FIELDS
+    is_reviewed = db.Column(db.Boolean, default=False, 
+                          comment="True if a human has reviewed this flagged content")
+    reviewed_at = db.Column(db.DateTime, nullable=True,
+                          comment="Timestamp when content was marked as reviewed")
     
     def to_dict(self):
         """
@@ -65,13 +71,17 @@ class FlaggedPost(db.Model):
             'bot_confidence': self.bot_confidence,
             'bot_reasons': self.bot_reasons,
             'session_id': self.session_id,
-            'timestamp': self.timestamp.isoformat() if self.timestamp else None
+            'timestamp': self.timestamp.isoformat() if self.timestamp else None,
+            # NEW REVIEW FIELDS IN OUTPUT
+            'is_reviewed': self.is_reviewed,
+            'reviewed_at': self.reviewed_at.isoformat() if self.reviewed_at else None
         }
     
     def __repr__(self):
         """String representation for debugging."""
         bot_indicator = " [BOT]" if self.is_bot else ""
-        return f'<FlaggedPost {self.id}: {self.label}{bot_indicator}>'
+        review_indicator = " [REVIEWED]" if self.is_reviewed else ""
+        return f'<FlaggedPost {self.id}: {self.label}{bot_indicator}{review_indicator}>'
 
 
 class MonitoringSession(db.Model):

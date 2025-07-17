@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from models import db, FlaggedPost, MonitoringSession
+from datetime import datetime
 import os
 
 app = Flask(__name__)
@@ -26,7 +27,6 @@ db.init_app(app)
 def home():
     return jsonify({"status": "running", "message": "Misinformation Guard API is running."})
 
-# ADD THIS NEW ROUTE FOR THE DASHBOARD
 @app.route("/dashboard")
 def dashboard():
     """Serve the React dashboard"""
@@ -39,11 +39,20 @@ def dashboard():
 def get_flagged():
     """
     Get all flagged posts from the database.
-    Returns them as JSON for our React app to consume.
+    By default, only returns unreviewed posts for the dashboard.
+    Add ?include_reviewed=true to see all posts.
     """
     try:
-        # Query all flagged posts, ordered by most recent first
-        posts = FlaggedPost.query.order_by(FlaggedPost.timestamp.desc()).all()
+        # Check if we should include reviewed posts
+        include_reviewed = request.args.get('include_reviewed', 'false').lower() == 'true'
+        
+        # Build query based on review status
+        if include_reviewed:
+            # Get all posts (reviewed and unreviewed)
+            posts = FlaggedPost.query.order_by(FlaggedPost.timestamp.desc()).all()
+        else:
+            # Only get unreviewed posts (default behavior for dashboard)
+            posts = FlaggedPost.query.filter_by(is_reviewed=False).order_by(FlaggedPost.timestamp.desc()).all()
         
         # Convert each post to a dictionary
         posts_data = [post.to_dict() for post in posts]
@@ -53,6 +62,67 @@ def get_flagged():
     except Exception as e:
         print(f"Error getting flagged posts: {e}")
         return jsonify({"error": "Failed to retrieve posts"}), 500
+
+# NEW ROUTE: Mark content as reviewed
+@app.route("/flagged/<int:post_id>/review", methods=["POST"])
+def mark_as_reviewed(post_id):
+    """
+    Mark a flagged post as reviewed.
+    This removes it from the dashboard display but keeps it in the database.
+    
+    Args:
+        post_id: The ID of the flagged post to mark as reviewed
+    """
+    try:
+        # Find the post in the database
+        post = FlaggedPost.query.get(post_id)
+        
+        if not post:
+            return jsonify({"error": "Post not found"}), 404
+        
+        if post.is_reviewed:
+            return jsonify({"message": "Post already marked as reviewed"}), 200
+        
+        # Mark as reviewed and set timestamp
+        post.is_reviewed = True
+        post.reviewed_at = datetime.utcnow()
+        
+        # Save changes to database
+        db.session.commit()
+        
+        return jsonify({
+            "message": "Post marked as reviewed",
+            "post_id": post_id,
+            "reviewed_at": post.reviewed_at.isoformat()
+        }), 200
+    
+    except Exception as e:
+        print(f"Error marking post as reviewed: {e}")
+        db.session.rollback()  # Undo any partial changes
+        return jsonify({"error": "Failed to mark post as reviewed"}), 500
+
+# NEW ROUTE: Get review statistics
+@app.route("/review-stats", methods=["GET"])
+def get_review_stats():
+    """
+    Get statistics about reviewed vs unreviewed content.
+    Useful for dashboard metrics.
+    """
+    try:
+        total_flagged = FlaggedPost.query.count()
+        reviewed_count = FlaggedPost.query.filter_by(is_reviewed=True).count()
+        unreviewed_count = FlaggedPost.query.filter_by(is_reviewed=False).count()
+        
+        return jsonify({
+            "total_flagged": total_flagged,
+            "reviewed_count": reviewed_count,
+            "unreviewed_count": unreviewed_count,
+            "review_percentage": (reviewed_count / total_flagged * 100) if total_flagged > 0 else 0
+        })
+    
+    except Exception as e:
+        print(f"Error getting review stats: {e}")
+        return jsonify({"error": "Failed to get review statistics"}), 500
 
 @app.route("/add", methods=["POST"])
 def add_flagged():
@@ -77,7 +147,8 @@ def add_flagged():
             is_bot=data.get('is_bot', False),
             bot_confidence=data.get('bot_confidence', 0.0),
             bot_reasons=data.get('bot_reasons'),
-            session_id=data.get('session_id')  # Link to monitoring session
+            session_id=data.get('session_id'),  # Link to monitoring session
+            # Review fields default to False/None as defined in model
         )
         
         # Add to database
@@ -211,6 +282,7 @@ def get_monitoring_summary():
 def get_stats():
     """
     Get summary statistics for the dashboard.
+    Now includes review statistics.
     """
     try:
         total_posts = FlaggedPost.query.count()
@@ -218,6 +290,10 @@ def get_stats():
         toxic_posts = FlaggedPost.query.filter_by(label='toxic').count()
         reliable_posts = FlaggedPost.query.filter_by(label='reliable').count()
         bot_posts = FlaggedPost.query.filter_by(is_bot=True).count()
+        
+        # NEW: Add review statistics
+        reviewed_posts = FlaggedPost.query.filter_by(is_reviewed=True).count()
+        unreviewed_posts = FlaggedPost.query.filter_by(is_reviewed=False).count()
         
         return jsonify({
             "total_flagged": total_posts,
@@ -229,6 +305,12 @@ def get_stats():
             "human_vs_bot": {
                 "bot_posts": bot_posts,
                 "human_posts": total_posts - bot_posts
+            },
+            # NEW: Review statistics
+            "review_stats": {
+                "reviewed_count": reviewed_posts,
+                "unreviewed_count": unreviewed_posts,
+                "review_percentage": (reviewed_posts / total_posts * 100) if total_posts > 0 else 0
             }
         })
     
