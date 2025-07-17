@@ -35,11 +35,66 @@ def dashboard():
     except FileNotFoundError:
         return jsonify({"error": "Dashboard file not found. Make sure working_dashboard.html is in the project root."}), 404
 
-# FORCE DATABASE RECREATION ROUTE
-@app.route("/reset-db")
-def reset_db():
-    """Force recreate database with new schema - USE ONLY FOR DEVELOPMENT"""
+# PRODUCTION-SAFE DATABASE MIGRATION
+def safe_database_migration():
+    """
+    Safely migrate database schema without losing data.
+    This function checks what needs to be added and only adds new columns.
+    """
     try:
+        # Create tables if they don't exist (safe operation)
+        db.create_all()
+        
+        # Check if we need to add new columns to existing tables
+        inspector = db.inspect(db.engine)
+        
+        # Check flagged_post table columns
+        if inspector.has_table('flagged_post'):
+            columns = [column['name'] for column in inspector.get_columns('flagged_post')]
+            
+            # Add missing columns without losing data
+            migrations_needed = []
+            
+            if 'is_reviewed' not in columns:
+                migrations_needed.append("ALTER TABLE flagged_post ADD COLUMN is_reviewed BOOLEAN DEFAULT FALSE")
+                
+            if 'reviewed_at' not in columns:
+                migrations_needed.append("ALTER TABLE flagged_post ADD COLUMN reviewed_at TIMESTAMP")
+            
+            # Execute migrations
+            if migrations_needed:
+                print(f"🔄 Running {len(migrations_needed)} database migrations...")
+                for migration in migrations_needed:
+                    try:
+                        db.engine.execute(migration)
+                        print(f"✅ Executed: {migration}")
+                    except Exception as e:
+                        print(f"⚠️ Migration might have already been applied: {e}")
+                
+                print("✅ Database migration completed successfully!")
+            else:
+                print("✅ Database schema is up to date!")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Database migration error: {e}")
+        return False
+
+# EMERGENCY RESET ROUTE (USE ONLY IN DEVELOPMENT)
+@app.route("/emergency-reset-db")
+def emergency_reset_db():
+    """
+    ⚠️ EMERGENCY ONLY: Force recreate database - WILL DELETE ALL DATA
+    This should only be used in development or if data corruption occurs.
+    """
+    # Safety check - only allow in development
+    if os.environ.get('FLASK_ENV') == 'production':
+        return jsonify({"error": "Database reset not allowed in production"}), 403
+    
+    try:
+        print("🚨 EMERGENCY DATABASE RESET - ALL DATA WILL BE LOST!")
+        
         # Drop all tables
         db.drop_all()
         print("🗑️ Dropped all existing tables")
@@ -49,13 +104,43 @@ def reset_db():
         print("✅ Created all tables with new schema")
         
         return jsonify({
-            "message": "Database reset successfully with new schema",
+            "message": "⚠️ EMERGENCY RESET COMPLETED - ALL DATA WAS DELETED",
             "status": "success",
-            "tables": ["flagged_post", "monitoring_session"]
+            "warning": "This operation deleted all existing data"
         })
     except Exception as e:
-        print(f"❌ Error resetting database: {e}")
+        print(f"❌ Error during emergency reset: {e}")
         return jsonify({"error": str(e)})
+
+# BACKUP ROUTE (FOR PRODUCTION DATA SAFETY)
+@app.route("/backup-data")
+def backup_data():
+    """
+    Create a JSON backup of all important data before migrations.
+    This allows you to restore data if something goes wrong.
+    """
+    try:
+        # Backup flagged posts
+        posts = FlaggedPost.query.all()
+        posts_backup = [post.to_dict() for post in posts]
+        
+        # Backup monitoring sessions
+        sessions = MonitoringSession.query.all()
+        sessions_backup = [session.to_dict() for session in sessions]
+        
+        backup_data = {
+            "backup_timestamp": datetime.utcnow().isoformat(),
+            "total_posts": len(posts_backup),
+            "total_sessions": len(sessions_backup),
+            "flagged_posts": posts_backup,
+            "monitoring_sessions": sessions_backup
+        }
+        
+        return jsonify(backup_data)
+        
+    except Exception as e:
+        print(f"❌ Error creating backup: {e}")
+        return jsonify({"error": "Failed to create backup"}), 500
 
 @app.route("/flagged", methods=["GET"])
 def get_flagged():
@@ -156,8 +241,6 @@ def add_flagged():
         if not data or 'content' not in data:
             return jsonify({"error": "Content is required"}), 400
         
-        print(f"📝 Adding flagged post with data keys: {list(data.keys())}")
-        
         # Create a new FlaggedPost object
         new_post = FlaggedPost(
             content=data['content'],
@@ -171,22 +254,18 @@ def add_flagged():
             bot_reasons=data.get('bot_reasons'),
             session_id=data.get('session_id'),  # Link to monitoring session
             # Review fields will default to False/None as defined in model
-            is_reviewed=False,  # Explicitly set for clarity
-            reviewed_at=None    # Explicitly set for clarity
+            is_reviewed=False,
+            reviewed_at=None
         )
         
         # Add to database
         db.session.add(new_post)
         db.session.commit()
         
-        print(f"✅ Successfully added flagged post with ID: {new_post.id}")
-        
         return jsonify({"status": "added", "id": new_post.id}), 201
     
     except Exception as e:
-        print(f"❌ Error adding flagged post: {e}")
-        import traceback
-        print(f"📋 Full traceback: {traceback.format_exc()}")
+        print(f"Error adding flagged post: {e}")
         db.session.rollback()  # Undo any partial changes
         return jsonify({"error": "Failed to add post"}), 500
 
@@ -346,28 +425,22 @@ def get_stats():
         return jsonify({"error": "Failed to get statistics"}), 500
 
 if __name__ == "__main__":
-    # Create database tables when app starts
+    # PRODUCTION-SAFE DATABASE SETUP
     with app.app_context():
-        # Force recreation of all tables with new schema
-        print("🔄 Checking database schema...")
+        print("🔄 Starting production-safe database setup...")
         
-        try:
-            # Try to create tables (will only create if they don't exist)
-            db.create_all()
-            print("✅ Database tables created/verified successfully!")
+        # Run safe migration that preserves data
+        if safe_database_migration():
+            print("✅ Database setup completed successfully!")
             
-            # Test if new columns exist by trying to query them
-            test_query = FlaggedPost.query.filter_by(is_reviewed=False).count()
-            print(f"🧪 Schema test passed - found {test_query} unreviewed posts")
-            
-        except Exception as e:
-            print(f"⚠️ Database schema issue detected: {e}")
-            print("🔄 Forcing database recreation...")
-            
-            # Drop and recreate all tables
-            db.drop_all()
-            db.create_all()
-            print("✅ Database recreated with new schema!")
+            # Test the schema
+            try:
+                test_query = FlaggedPost.query.filter_by(is_reviewed=False).count()
+                print(f"🧪 Schema test passed - found {test_query} unreviewed posts")
+            except Exception as e:
+                print(f"⚠️ Schema test failed: {e}")
+        else:
+            print("❌ Database setup failed!")
     
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
