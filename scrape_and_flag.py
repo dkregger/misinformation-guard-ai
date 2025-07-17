@@ -32,6 +32,7 @@ def create_obvious_human_data(username):
         'profile_image_url': 'custom_profile.jpg',
         'verified': False
     }
+
 def scrape_tweets(keyword, since_days=1, max_results=20):
     """Mock function that creates test tweets for development"""
     print(f"🧪 Using mock data for testing (keyword: {keyword})")
@@ -73,8 +74,8 @@ def scrape_tweets(keyword, since_days=1, max_results=20):
         }
     ]
 
-# Replace with your Heroku app URL
-APP_URL = "http://localhost:5000/add"  # Using localhost for testing
+# Replace with your API URL
+APP_URL = "http://localhost:5000/add"
 KEYWORD = "Sherrod Brown"  # Change to your candidate or topic
 
 def main():
@@ -129,6 +130,7 @@ def main():
                     flag_reason = f"BOT ACCOUNT (confidence: {bot_score:.3f})"
                 
                 if should_flag:
+                    # UPDATED PAYLOAD - includes all required fields but review fields default to False/None
                     payload = {
                         "content": tweet['content'],
                         "confidence": score,
@@ -138,19 +140,37 @@ def main():
                         "username": tweet['user'],
                         "is_bot": is_bot,
                         "bot_confidence": bot_score,
-                        "bot_reasons": json.dumps(bot_reasons)  # Convert list to JSON string
+                        "bot_reasons": json.dumps(bot_reasons),  # Convert list to JSON string
+                        # NOTE: is_reviewed and reviewed_at will be set to default values by the database
+                        # is_reviewed defaults to False, reviewed_at defaults to None
                     }
                     
                     print(f"  🚩 Flagging as {flag_reason}")
+                    print(f"  📡 Sending payload with {len(payload)} fields")
                     
                     # Send to our API
-                    response = requests.post(APP_URL, json=payload, timeout=10)
-                    
-                    if response.status_code == 201:
-                        print("  ✅ Successfully flagged")
-                        flagged_count += 1
-                    else:
-                        print(f"  ❌ Failed to flag: {response.status_code}")
+                    try:
+                        response = requests.post(APP_URL, json=payload, timeout=10)
+                        
+                        print(f"  📊 API Response Status: {response.status_code}")
+                        
+                        if response.status_code == 201:
+                            response_data = response.json()
+                            print(f"  ✅ Successfully flagged (ID: {response_data.get('id', 'unknown')})")
+                            flagged_count += 1
+                        else:
+                            print(f"  ❌ Failed to flag: HTTP {response.status_code}")
+                            try:
+                                error_data = response.json()
+                                print(f"  📋 Error details: {error_data}")
+                            except:
+                                print(f"  📋 Error response: {response.text}")
+                                
+                    except requests.exceptions.RequestException as req_error:
+                        print(f"  🔌 Request error: {req_error}")
+                    except Exception as api_error:
+                        print(f"  ⚠️ API error: {api_error}")
+                        
                 else:
                     print(f"  ℹ️  Not flagged (below thresholds)")
                 
@@ -159,13 +179,17 @@ def main():
                 
             except Exception as e:
                 print(f"  ❌ Error analyzing tweet: {e}")
+                import traceback
+                print(f"  📋 Full error: {traceback.format_exc()}")
                 continue
         
         print(f"\n📊 Summary: Flagged {flagged_count} out of {len(tweets)} tweets")
-        print(f"🌐 Check results at: http://localhost:5000/flagged")
+        print(f"🌐 Check results at: http://localhost:5000/dashboard")
         
     except Exception as e:
         print(f"❌ Error in main process: {e}")
+        import traceback
+        print(f"📋 Full error: {traceback.format_exc()}")
 
 if __name__ == "__main__":
     main()

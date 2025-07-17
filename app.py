@@ -35,6 +35,28 @@ def dashboard():
     except FileNotFoundError:
         return jsonify({"error": "Dashboard file not found. Make sure working_dashboard.html is in the project root."}), 404
 
+# FORCE DATABASE RECREATION ROUTE
+@app.route("/reset-db")
+def reset_db():
+    """Force recreate database with new schema - USE ONLY FOR DEVELOPMENT"""
+    try:
+        # Drop all tables
+        db.drop_all()
+        print("🗑️ Dropped all existing tables")
+        
+        # Create all tables with current schema
+        db.create_all()
+        print("✅ Created all tables with new schema")
+        
+        return jsonify({
+            "message": "Database reset successfully with new schema",
+            "status": "success",
+            "tables": ["flagged_post", "monitoring_session"]
+        })
+    except Exception as e:
+        print(f"❌ Error resetting database: {e}")
+        return jsonify({"error": str(e)})
+
 @app.route("/flagged", methods=["GET"])
 def get_flagged():
     """
@@ -63,7 +85,6 @@ def get_flagged():
         print(f"Error getting flagged posts: {e}")
         return jsonify({"error": "Failed to retrieve posts"}), 500
 
-# NEW ROUTE: Mark content as reviewed
 @app.route("/flagged/<int:post_id>/review", methods=["POST"])
 def mark_as_reviewed(post_id):
     """
@@ -101,7 +122,6 @@ def mark_as_reviewed(post_id):
         db.session.rollback()  # Undo any partial changes
         return jsonify({"error": "Failed to mark post as reviewed"}), 500
 
-# NEW ROUTE: Get review statistics
 @app.route("/review-stats", methods=["GET"])
 def get_review_stats():
     """
@@ -136,6 +156,8 @@ def add_flagged():
         if not data or 'content' not in data:
             return jsonify({"error": "Content is required"}), 400
         
+        print(f"📝 Adding flagged post with data keys: {list(data.keys())}")
+        
         # Create a new FlaggedPost object
         new_post = FlaggedPost(
             content=data['content'],
@@ -148,17 +170,23 @@ def add_flagged():
             bot_confidence=data.get('bot_confidence', 0.0),
             bot_reasons=data.get('bot_reasons'),
             session_id=data.get('session_id'),  # Link to monitoring session
-            # Review fields default to False/None as defined in model
+            # Review fields will default to False/None as defined in model
+            is_reviewed=False,  # Explicitly set for clarity
+            reviewed_at=None    # Explicitly set for clarity
         )
         
         # Add to database
         db.session.add(new_post)
         db.session.commit()
         
+        print(f"✅ Successfully added flagged post with ID: {new_post.id}")
+        
         return jsonify({"status": "added", "id": new_post.id}), 201
     
     except Exception as e:
-        print(f"Error adding flagged post: {e}")
+        print(f"❌ Error adding flagged post: {e}")
+        import traceback
+        print(f"📋 Full traceback: {traceback.format_exc()}")
         db.session.rollback()  # Undo any partial changes
         return jsonify({"error": "Failed to add post"}), 500
 
@@ -291,7 +319,7 @@ def get_stats():
         reliable_posts = FlaggedPost.query.filter_by(label='reliable').count()
         bot_posts = FlaggedPost.query.filter_by(is_bot=True).count()
         
-        # NEW: Add review statistics
+        # Add review statistics
         reviewed_posts = FlaggedPost.query.filter_by(is_reviewed=True).count()
         unreviewed_posts = FlaggedPost.query.filter_by(is_reviewed=False).count()
         
@@ -306,7 +334,6 @@ def get_stats():
                 "bot_posts": bot_posts,
                 "human_posts": total_posts - bot_posts
             },
-            # NEW: Review statistics
             "review_stats": {
                 "reviewed_count": reviewed_posts,
                 "unreviewed_count": unreviewed_posts,
@@ -321,8 +348,26 @@ def get_stats():
 if __name__ == "__main__":
     # Create database tables when app starts
     with app.app_context():
-        db.create_all()
-        print("Database tables created successfully!")
+        # Force recreation of all tables with new schema
+        print("🔄 Checking database schema...")
+        
+        try:
+            # Try to create tables (will only create if they don't exist)
+            db.create_all()
+            print("✅ Database tables created/verified successfully!")
+            
+            # Test if new columns exist by trying to query them
+            test_query = FlaggedPost.query.filter_by(is_reviewed=False).count()
+            print(f"🧪 Schema test passed - found {test_query} unreviewed posts")
+            
+        except Exception as e:
+            print(f"⚠️ Database schema issue detected: {e}")
+            print("🔄 Forcing database recreation...")
+            
+            # Drop and recreate all tables
+            db.drop_all()
+            db.create_all()
+            print("✅ Database recreated with new schema!")
     
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
