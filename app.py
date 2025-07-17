@@ -1,8 +1,12 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS  # Add this import
 from models import db, FlaggedPost, MonitoringSession
 import os
 
 app = Flask(__name__)
+
+# Enable CORS for all routes - Add this line
+CORS(app)
 
 # Database configuration
 # On Heroku, DATABASE_URL is automatically set
@@ -20,7 +24,7 @@ db.init_app(app)
 
 @app.route("/")
 def home():
-    return "Misinformation Guard API is running."
+    return jsonify({"status": "running", "message": "Misinformation Guard API is running."})
 
 @app.route("/flagged", methods=["GET"])
 def get_flagged():
@@ -193,6 +197,7 @@ def get_monitoring_summary():
     except Exception as e:
         print(f"Error getting monitoring summary: {e}")
         return jsonify({"error": "Failed to get monitoring summary"}), 500
+
 @app.route("/stats", methods=["GET"])
 def get_stats():
     """

@@ -5,3 +5,6 @@ requests
 newspaper3k
 Flask-SQLAlchemy
 psycopg2-binary
+lxml_html_clean
+beautifulsoup4
+flask-cors
