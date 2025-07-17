@@ -1,11 +1,11 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS  # Add this import
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
 from models import db, FlaggedPost, MonitoringSession
 import os
 
 app = Flask(__name__)
 
-# Enable CORS for all routes - Add this line
+# Enable CORS for all routes
 CORS(app)
 
 # Database configuration
@@ -25,6 +25,15 @@ db.init_app(app)
 @app.route("/")
 def home():
     return jsonify({"status": "running", "message": "Misinformation Guard API is running."})
+
+# ADD THIS NEW ROUTE FOR THE DASHBOARD
+@app.route("/dashboard")
+def dashboard():
+    """Serve the React dashboard"""
+    try:
+        return send_from_directory('.', 'working_dashboard.html')
+    except FileNotFoundError:
+        return jsonify({"error": "Dashboard file not found. Make sure working_dashboard.html is in the project root."}), 404
 
 @app.route("/flagged", methods=["GET"])
 def get_flagged():
