@@ -8,3 +8,9 @@ psycopg2-binary
 lxml_html_clean
 beautifulsoup4
 flask-cors
+opencv-python
+Pillow
+numpy
+scikit-learn
+pandas
+networkx

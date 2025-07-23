@@ -71,6 +71,21 @@ def scrape_tweets(keyword, since_days=1, max_results=20):
             'date': datetime.datetime.utcnow().isoformat(),
             'url': 'https://twitter.com/test/status/5',
             'user_data': create_obvious_human_data("neutral_human")
+        },
+        # Add more users with similar content patterns
+        {
+            'user': 'coordinated_user_1',
+            'content': 'URGENT! Deep state exposed! Share before deleted!',
+            'date': datetime.datetime.utcnow().isoformat(),
+            'url': 'https://twitter.com/test/status/6',
+            'user_data': create_obvious_bot_data("coord_bot_1")
+        },
+        {
+            'user': 'coordinated_user_2', 
+            'content': 'URGENT! Deep state exposed! Share before deleted!',
+            'date': datetime.datetime.utcnow().isoformat(),
+            'url': 'https://twitter.com/test/status/7',
+            'user_data': create_obvious_bot_data("coord_bot_2")
         }
     ]
 
